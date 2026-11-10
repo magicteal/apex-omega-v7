@@ -580,6 +580,13 @@ class RestoreStateRequest(BaseModel):
 @app.post("/api/restore-state")
 async def restore_server_state(req: RestoreStateRequest) -> Dict[str, Any]:
     """Restores account state from browser backup if Render container restarted."""
+    has_stale_v7 = any(
+        "MOMENTUM_SURGE" in str(t.get("setup_type", ""))
+        or str(t.get("exit_time", "")) < "2026-11-10T07:35:00"
+        for t in req.trade_history
+    )
+    if has_stale_v7 or not req.trade_history:
+        return {"status": "REJECTED_STALE_V7_STATE", "telemetry": daemon.build_payload()}
     if daemon.state.get("total_closed_trades", 0) == 0 and req.total_closed_trades > 0:
         daemon.state["active_equity"] = round(req.active_equity, 2)
         daemon.state["peak_equity"] = round(req.peak_equity, 2)

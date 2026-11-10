@@ -418,6 +418,10 @@ export default function App() {
         setRenderUrlInput(cleaned);
       }
 
+      try {
+        localStorage.removeItem("apex_omega_real_state_v7");
+        localStorage.removeItem("apex_omega_render_url_v7");
+      } catch {}
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
