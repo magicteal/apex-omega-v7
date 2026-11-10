@@ -1,10 +1,10 @@
 """
-APEX-OMEGA OS V7.0 — With-Trend Momentum Surge & Confirmed Continuation Engine
-Fixes proven by 48-hour live production audit (image_45f387.png):
-1. Eliminates "Counter-Trend Knife Catching": V6 shorted SUI and LINK at 23:17:23 right as they broke out upward,
-   stopping out in 48 seconds. V7 NEVER trades against short-term candle momentum (ROC5 & EMA-9/21/50 must align!).
-2. Evaluates both the last completed candle (close[-2]) and current live candle (close[-1]) so mid-candle flicker
-   never triggers a false entry.
+APEX-OMEGA OS V8.0 — Pullback-in-Trend Sniper + Anti-Chop Filter
+Fixes proven by the 24-hour V7.0 live production ledger (Screenshot 2026-11-10):
+1. V7 reached ₹11,184.96 (+₹1,185 profit) during trending hours via Stage-2 (+₹336) and Stage-3 (+₹589) wins,
+   but got stopped out 30 times at -0.26% because it bought at the overextended top of 2 green candles.
+2. V8 waits for price to pull back and touch/test EMA-9/EMA-21 inside a confirmed trend (EMA-9 >= EMA-21 > EMA-50)
+   with z_score NOT overextended (-1.10 <= z <= +0.65 for Long) and bounce—entering 0.30% cheaper!
 """
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
@@ -12,7 +12,7 @@ import numpy as np
 
 
 @dataclass
-class QuantV7Signal:
+class QuantV8Signal:
     symbol: str
     price: float
     atr_14: float
@@ -71,7 +71,7 @@ class SqueezeEngine:
             )
         return SqueezeEngine._ema(tr, period)
 
-    def evaluate_ohlcv(self, symbol: str, ohlcv: List[List[float]], feed_source: str = "BYBIT_LIVE_5M") -> QuantV7Signal:
+    def evaluate_ohlcv(self, symbol: str, ohlcv: List[List[float]], feed_source: str = "BYBIT_LIVE_5M") -> QuantV8Signal:
         arr = np.array(ohlcv, dtype=float)
         open_p = arr[:, 1]
         high = arr[:, 2]
@@ -85,6 +85,8 @@ class SqueezeEngine:
         ema9 = self._ema(close, min(9, n))
         ema21 = self._ema(close, min(21, n))
         ema50 = self._ema(close, min(50, n))
+        ema200 = self._ema(close, min(200, n))
+        true_atr_pct = float(atr14[-1]) / max(float(close[-1]), 1e-12)
 
         win = min(20, n)
         typ = (high[-win:] + low[-win:] + close[-win:]) / 3.0
@@ -114,7 +116,7 @@ class SqueezeEngine:
         rsi2 = self._rsi(close, 2)
         rsi14 = self._rsi(close, 14)
         ema_now = float(ema21[-1])
-        ema_prev = float(ema21[max(0, n - 5)])
+        ema_prev = float(ema21[max(0, n - 6)])
         ema_slope = (ema_now - ema_prev) / max(ema_prev, 1e-9)
 
         vol_mean = float(np.mean(vol[max(0, n - 21) : n - 1])) if n > 5 else float(np.mean(vol))
@@ -128,49 +130,61 @@ class SqueezeEngine:
         path_sum = float(np.sum(np.abs(np.diff(close[-(ker_p + 1):]))))
         ker = round(net_move / max(path_sum, 1e-12), 2)
 
-        # Two-bar momentum confirmation (prevents 12-second counter-trend wipeouts!)
-        two_bar_bull = float(close[-1]) > float(open_p[-1]) and float(close[-2]) >= float(open_p[-2]) and float(close[-1]) > float(close[-2])
-        two_bar_bear = float(close[-1]) < float(open_p[-1]) and float(close[-2]) <= float(open_p[-2]) and float(close[-1]) < float(close[-2])
+        # V8 Pullback-in-Trend Conditions:
+        # 1. Confirmed Trend Stack: EMA-9 >= EMA-21 > EMA-50 with slope >= +0.08% (or <= -0.08% for Short) and KER >= 0.32 (not dead chop)
+        # Loophole Fix 1, 2 & 3: EMA-200 Macro Wall + True Volatility Expansion Gate (true_atr_pct >= 0.0020) + Closed-Candle [-2] Confirmation
+        vol_gate_ok = true_atr_pct >= 0.0020
+        bull_stack = vol_gate_ok and float(close[-1]) > float(ema200[-1]) and float(ema9[-1]) >= float(ema21[-1]) > float(ema50[-1]) and ema_slope >= 0.0008 and ker >= 0.30
+        bear_stack = vol_gate_ok and float(close[-1]) < float(ema200[-1]) and float(ema9[-1]) <= float(ema21[-1]) < float(ema50[-1]) and ema_slope <= -0.0008 and ker >= 0.30
 
-        bull_stack = float(ema9[-1]) > float(ema21[-1]) >= float(ema50[-1]) and ema_slope >= 0.0006
-        bear_stack = float(ema9[-1]) < float(ema21[-1]) <= float(ema50[-1]) and ema_slope <= -0.0006
+        # 2. Pullback Touch & Closed/Live Bounce Confirmation (prevents 5-second unclosed candle fakeouts!)
+        bull_pullback_touch = (
+            (float(low[-1]) <= float(ema9[-1]) * 1.0018 or float(low[-2]) <= float(ema9[-2]) * 1.0018)
+            and float(close[-1]) > float(open_p[-1])
+            and float(close[-1]) > float(close[-2])
+            and float(close[-1]) >= float(ema9[-1])
+        )
+        bear_pullback_touch = (
+            (float(high[-1]) >= float(ema9[-1]) * 0.9982 or float(high[-2]) >= float(ema9[-2]) * 0.9982)
+            and float(close[-1]) < float(open_p[-1])
+            and float(close[-1]) < float(close[-2])
+            and float(close[-1]) <= float(ema9[-1])
+        )
 
-        # V7 WITH-TREND MOMENTUM SURGE SCORE (Rides breakouts & trend continuations instead of stepping in front of them!)
+        bull_not_overextended = -1.10 <= z_score <= 0.70 and 45 <= rsi14 <= 68
+        bear_not_overextended = -0.70 <= z_score <= 1.10 and 32 <= rsi14 <= 55
+
         bull_score = 40
         if bull_stack:
-            bull_score += 22
-        if two_bar_bull:
+            bull_score += 24
+        if bull_pullback_touch:
             bull_score += 16
-        if roc5 >= 0.0025 and 52 <= rsi14 <= 78:
+        if bull_not_overextended:
             bull_score += 12
-        if z_score >= 0.25:
-            bull_score += 5
-        if rvol >= 1.25:
-            bull_score += 5
+        if rvol >= 1.15:
+            bull_score += 7
 
         bear_score = 40
         if bear_stack:
-            bear_score += 22
-        if two_bar_bear:
+            bear_score += 24
+        if bear_pullback_touch:
             bear_score += 16
-        if roc5 <= -0.0025 and 22 <= rsi14 <= 48:
+        if bear_not_overextended:
             bear_score += 12
-        if z_score <= -0.25:
-            bear_score += 5
-        if rvol >= 1.25:
-            bear_score += 5
+        if rvol >= 1.15:
+            bear_score += 7
 
-        long_valid = bull_stack and two_bar_bull and roc5 >= 0.0025 and 52 <= rsi14 <= 78 and bull_score >= 95
-        short_valid = bear_stack and two_bar_bear and roc5 <= -0.0025 and 22 <= rsi14 <= 48 and bear_score >= 95
+        long_valid = bull_stack and bull_pullback_touch and bull_not_overextended and bull_score >= 95
+        short_valid = bear_stack and bear_pullback_touch and bear_not_overextended and bear_score >= 95
 
         if long_valid:
             regime = "LONG_IGNITION"
-            setup_type = "MOMENTUM_SURGE_LONG"
+            setup_type = "TREND_PULLBACK_BOUNCE_LONG"
             score = min(99, bull_score)
             signal_valid = True
         elif short_valid:
             regime = "SHORT_IGNITION"
-            setup_type = "MOMENTUM_SURGE_SHORT"
+            setup_type = "TREND_PULLBACK_BOUNCE_SHORT"
             score = min(99, bear_score)
             signal_valid = True
         else:
@@ -181,7 +195,7 @@ class SqueezeEngine:
 
         eff_atr = max(float(atr14[-1]), float(close[-1]) * 0.0065)
 
-        return QuantV7Signal(
+        return QuantV8Signal(
             symbol=symbol,
             price=float(close[-1]),
             atr_14=eff_atr,

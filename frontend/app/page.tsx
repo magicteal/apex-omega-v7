@@ -341,7 +341,7 @@ export default function App() {
   const [peakEquity, setPeakEquity] = useState<number>(10000.0);
   const [vaultBalance, setVaultBalance] = useState<number>(0.0);
   const [principalSiphoned, setPrincipalSiphoned] = useState<boolean>(false);
-  const [nextMilestone, setNextMilestone] = useState<number>(20000.0);
+  const [nextMilestone, setNextMilestone] = useState<number>(11500.0);
   const [scanner, setScanner] = useState<AssetSignal[]>(() =>
     UNIVERSE_PAIRS.map((p) => ({
       symbol: p.symbol,
@@ -505,40 +505,12 @@ export default function App() {
     .toFixed(2);
   const netRealizedPnl = +(grossProfit - grossLoss).toFixed(2);
 
-  // Vault Siphon Protocol Evaluation
+  // 100% Pure Account Compounding (No automatic Vault Siphon — 100% of profit compounds into next trade size)
   useEffect(() => {
     if (liveActiveEquity > peakEquity) {
       setPeakEquity(liveActiveEquity);
     }
-    if (!principalSiphoned && liveActiveEquity >= 20000) {
-      const siphonAmt = 10000;
-      const postLive = +(liveActiveEquity - siphonAmt).toFixed(2);
-      const nextTarget = +(postLive * 1.85).toFixed(2);
-      setActiveEquity((eq) => +(eq - siphonAmt).toFixed(2));
-      setVaultBalance((v) => +(v + siphonAmt).toFixed(2));
-      setPrincipalSiphoned(true);
-      setNextMilestone(nextTarget);
-      triggerAlertPopup(
-        "VAULT_SIPHON",
-        "🔒 ₹10,000 PRINCIPAL LOCKED IN COLD VAULT",
-        `Account reached ₹20,000! Original ₹10,000 principal siphoned to Vault. Now trading 100% on house profit.`,
-        10000
-      );
-    } else if (principalSiphoned && liveActiveEquity >= nextMilestone && nextMilestone > 0) {
-      const siphonAmt = +(liveActiveEquity * 0.30).toFixed(2);
-      const postLive = +(liveActiveEquity - siphonAmt).toFixed(2);
-      const nextTarget = +(postLive * 1.85).toFixed(2);
-      setActiveEquity((eq) => +(eq - siphonAmt).toFixed(2));
-      setVaultBalance((v) => +(v + siphonAmt).toFixed(2));
-      setNextMilestone(nextTarget);
-      triggerAlertPopup(
-        "VAULT_SIPHON",
-        "🏦 30% PROFIT HARVESTED TO VAULT",
-        `1.85x Milestone reached! Locked ₹${siphonAmt.toLocaleString("en-IN")} into Cold Vault.`,
-        siphonAmt
-      );
-    }
-  }, [liveActiveEquity, peakEquity, principalSiphoned, nextMilestone, triggerAlertPopup]);
+  }, [liveActiveEquity, peakEquity]);
 
   // Close Active Campaign Helper
   const closeActiveTrade = useCallback(
@@ -944,6 +916,28 @@ export default function App() {
             const data = await res.json();
             if (Array.isArray(data.scanner) && data.scanner.length > 0) {
               setFeedBadge("RENDER 24/7 CLOUD DAEMON SYNCED");
+              // Loophole Fix 5: If Render container restarted (0 closed trades on server) while browser has saved trades, auto-restore to Render!
+              if ((data.total_closed_trades ?? 0) === 0 && stateRef.current.tradeHistory.length > 0) {
+                const restoreUrl = [renderUrl, "api", "restore-state"].join("/");
+                const localWins = stateRef.current.tradeHistory.filter((t) => t.realized_pnl_inr > 0);
+                const localLosses = stateRef.current.tradeHistory.filter((t) => t.realized_pnl_inr <= 0);
+                await fetch(restoreUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    active_equity: stateRef.current.activeEquity,
+                    peak_equity: stateRef.current.peakEquity,
+                    vault_balance: stateRef.current.vaultBalance,
+                    wins: localWins.length,
+                    losses: localLosses.length,
+                    total_closed_trades: stateRef.current.tradeHistory.length,
+                    gross_profit_inr: localWins.reduce((a, b) => a + b.realized_pnl_inr, 0),
+                    gross_loss_inr: localLosses.reduce((a, b) => a + Math.abs(b.realized_pnl_inr), 0),
+                    trade_history: stateRef.current.tradeHistory,
+                  }),
+                });
+                return;
+              }
               setActiveEquity(data.realized_base_equity ?? data.active_equity ?? 10000);
               setPeakEquity(data.kelly?.peak_equity ?? 10000);
               setVaultBalance(data.vault_balance ?? 0);
@@ -1186,7 +1180,7 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-2.5">
             <span className="w-2.5 h-2.5 rounded-full bg-[#97CEB4] animate-pulse" />
             <h1 className="text-sm sm:text-base font-bold tracking-widest text-white">
-              APEX-OMEGA V7 // HYPER-MOMENTUM SURGE & WIDE-BREATHING RATCHET
+              APEX-OMEGA V8 // 100% PURE COMPOUNDING TREND-PULLBACK SNIPER
             </h1>
             <span className="px-2 py-0.5 text-[10px] bg-[#97CEB4]/15 border border-[#97CEB4]/40 text-[#97CEB4]">
               {feedBadge}
@@ -1239,12 +1233,12 @@ export default function App() {
           </div>
 
           <div className="p-3 bg-[#0B0F12] border border-[#1C242D]">
-            <div className="text-[10px] text-slate-400 uppercase">COLD VAULT LOCKED</div>
+            <div className="text-[10px] text-slate-400 uppercase">COMPOUNDING POWER (6.5X)</div>
             <div className="text-base sm:text-lg font-bold text-amber-300 mt-0.5">
-              ₹{vaultBalance.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              ₹{Math.round(liveActiveEquity * 6.5).toLocaleString("en-IN")}
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5">
-              Next Siphon: ₹{nextMilestone.toLocaleString("en-IN")}
+              100% Reinvested (Auto-Vault Off)
             </div>
           </div>
 
