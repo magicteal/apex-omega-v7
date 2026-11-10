@@ -122,8 +122,8 @@ function fmtPrice(val: number): number {
   return +val.toFixed(2);
 }
 
-const STORAGE_KEY = "apex_omega_real_state_v7";
-const RENDER_URL_KEY = "apex_omega_render_url_v7";
+const STORAGE_KEY = "apex_omega_real_state_v8";
+const RENDER_URL_KEY = "apex_omega_render_url_v8";
 
 function calcEma(values: number[], span: number): number[] {
   const alpha = 2.0 / (span + 1.0);
@@ -1063,6 +1063,9 @@ export default function App() {
     setTradeHistory([]);
     setPopupAlerts([]);
     setActivePopup(null);
+    if (renderUrl) {
+      fetch(`${renderUrl}/api/reset`, { method: "POST" }).catch(() => {});
+    }
   };
 
   return (
